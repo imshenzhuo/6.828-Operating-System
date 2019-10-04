@@ -6,7 +6,18 @@
 2. boot loader,代码在目录boot下
 3. 初始化的内核模板 JOS,代码在目录kernel下
 
-## 软件准备
+## 准备
+
+### 理论准备
+
+MIT给出了预备知识的回顾
+
+1. x86架构计算机结构 
+   1. 笔记 https://pdos.csail.mit.edu/6.828/2018/lec/l-x86.html
+   2. PPT https://pdos.csail.mit.edu/6.828/2018/lec/l-x86.pdf
+2. x86汇编 https://pdos.csail.mit.edu/6.828/2018/readings/pcasm-book.pdf
+
+### 软件准备
 
 - Qemu https://pdos.csail.mit.edu/6.828/2018/tools.html#qemu
   - 可能会出现一些情况  参考 https://www.cnblogs.com/wuchanming/p/5008484.html
@@ -14,19 +25,11 @@
 
 ## Part 1 PC启动
 
-### 熟悉x86汇编
-
-> https://pdos.csail.mit.edu/6.828/2018/readings/pcasm-book.pdf
->
-> 汇编器有两种：NASM、GNU；其中NASM使用Intel格式,GNU采用AT&T格式
-
-
-
 ### PC的物理地址空间
 
-> 第一个PC使用的是16位的8086处理器,仿真的是80386处理器,该处理器32位,寻址空间2^32=4G
+> 历史上第一个PC使用的是16位的8086处理器,本实验仿真的是80386处理器,该处理器32位,寻址空间2^32=4G
 
-A PC's physical address space is hard-wired to have the following general layout:
+A PC's physical address space is **hard-wired** to have the following general layout:
 
 ```
 +------------------+  <- 0xFFFFFFFF (4GB)
@@ -60,10 +63,20 @@ A PC's physical address space is hard-wired to have the following general layout
 +------------------+  <- 0x00000000
 ```
 
-> 注意到并不是全部是RAM,BIOS就是ROM
-> BIOS不是一个芯片吗？还是说内存条的地址不是从零开始的？
->
-> 按照图中的意思,内存条也就是RAM是从1M开始的,Extended Memory区域就是内存条的区域,其他的区域由别的设备使用或者空闲。
+注意到
+1. 并不是全部是RAM,BIOS就是ROM
+2. 因为地址线有32根, 所以地址空间自然就是2^32=4G
+3. 该地址空间是物理空间,全部都是通过电路硬编码组成的
+
+#### 物理地址空间说明
+
+低640k,Low Memory区域是早期PC唯一可以使用的RAM, 为了兼容所以就留了下来
+
+紧接着的384k是为特殊用途的硬件留下来的物理地址空间, 比如说启动的BIOS或者显示屏的VGA
+
+这384k的空间以一个洞的形式将RAM分成了两部分,Low Memory & Extended Memory
+
+注意: 由于`JOS`设计的限制, 在之后所有关于`JOS`的`lab`中只使用前256M的物理内存.
 
 ### ROM BIOS
 
@@ -102,19 +115,17 @@ PC启动上电后执行的第一条指令
 [f000:fff0] 0xffff0:	ljmp   $0xf000,$0xe05b
 ```
 
-注意到：
+可以得出一些信息：
 
-- 第一条指令在BIOS内 ,BIOS有64k字节,该指令在BIOS区域最前面倒数第16个字节
+- 第一条指令在BIOS内 ,BIOS有64k字节,该指令在BIOS区域的最后---倒数第16个字节
 - PC开始执行：`CS = 0xf000` and `IP = 0xfff0`.
 - 第一条指令做的是跳转,毕竟16个字节做不了什么
 
-到此,都发生了什么呢？首先按下PC电源开机,此时还是裸机,内存里面什么都没有,BIOS程序是硬编码在指定地址的,按下电源后处理器`reset`,进入`real mode`,设置`cs`和`ip`分别等于`0xf000`和`0xfff0`,在该模式下得到物理地址`0xffff0`,也就是BIOS的地盘。CPU开始取指、执行、取指……
+到此,都发生了什么呢？首先按下PC电源开机,此时还是裸机, 一堆硬板, 内存里面什么都没有, BIOS程序是硬编码在指定地址的, 按下电源后处理器`reset`, 进入`real mode`, 硬件程序设置`cs`和`ip`分别等于`0xf000`和`0xfff0`(硬编码),在该模式下得到物理地址`0xffff0`, 也就是BIOS的地盘. CPU开始取指、执行、取指……
 
 - `real mode`参考[mode](../prepare/mode/book1.2.7)
 
 - `ljump`指令,第一个参数是`cs`寄存器,第二个是`ip`寄存器得到的物理地址
-
-  
 
 #### BIOS的工作
 
@@ -128,13 +139,13 @@ PC启动上电后执行的第一条指令
 
 ## Part 2 Boot Loader
 
-当`BIOS`发现一个bootable的device的时候,将该device的第一个扇区`boot sector`的内容加载(从device到Low Memory)到地址`0x7c00--0x7dff`,使用`ljmp`指令跳到该地址(`0000:7c00`)后控制权由`BIOS`交接到`boot loader`(CPU的取指地方的变化),`boot loader`的最大512Byte（早期PC）
+当`BIOS`发现一个bootable的device的时候,将该device的第一个扇区`boot sector`的内容加载(从device到Low Memory)到物理地址`0x7c00--0x7dff`,使用`ljmp`指令跳到该地址(`0000:7c00`)后控制权由`BIOS`交接到`boot loader`(CPU的取指地方,也就是`cs`寄存器的变化),早期PC`boot loader`的最大512字节.
 
 ### Boot Loader的工作
 
 `boot loader`的内容在`boot/boot.S`和`boot/main.c`中,`boot loader`主要完成了两件事
 
-- 处理器从`real mode`转为`protect mode`,简单来说,原来的地址空间只够1M(20 bits),现在可以到4G(32 bits)
+- 将处理器从`real mode`转为`protect mode`,简单来说,原来的地址空间只够1M(20 bits),现在可以到4G(32 bits)
 - 加载`kernel`,后将控制权交给`kernel `
 
 注意：可以参考`obj/boot/boot.sam`,源码反汇编形成的汇编代码
@@ -179,13 +190,17 @@ Continuing.
 通过将`CR0`寄存器的`PE`置一,使保护模式使能,后通过`jmp`切换
 
 ``` asm
-[   0:7c2c] => 0x7c2c:	ljmp   $0x8,$0x7c31
-0x00007c2c in ?? ()
-(gdb) 
+[   0:7c26] => 0x7c26:  or     $0x1,%eax
+0x00007c26 in ?? ()
+[   0:7c2a] => 0x7c2a:  mov    %eax,%cr0
+0x00007c2a in ?? ()
+[   0:7c2d] => 0x7c2d:  ljmp   $0x8,$0x7c32
+0x00007c2d in ?? ()
 The target architecture is assumed to be i386
-=> 0x7c31:	mov    $0x10,%ax
-0x00007c31 in ?? ()
+=> 0x7c32:      mov    $0x10,%ax
+0x00007c32 in ?? ()
 (gdb) 
+
 ```
 
 注意到`ljmp`指令执行后,地址标示发生了变化,进入了32位模式
@@ -194,7 +209,7 @@ The target architecture is assumed to be i386
 
 > What is the *last* instruction of the boot loader executed, and what is the *first* instruction of the kernel it just loaded?
 
-`boot loader`最后一条指令
+通过反汇编文件得到`boot loader`最后一条指令
 
 ``` bash
 // call the entry point from the ELF header
@@ -207,13 +222,15 @@ kernel第一条指令
 
 ![](./img/firstInst.png)
 
+注意到: boot loader 最后一条指令的地址是 `0x76db`在`Low Memory`中的`0x7c00-0x7dff`区域, 而`kernel`的地址就直接到了`Extend Memory`中
+
 #### 问题3
 
 > *Where* is the first instruction of the kernel?
 
 上图可以看出第一个指令的地址是`0x10000c`
 
-或者对`kernel`文件反汇编得到
+或者对`kernel`文件反汇编也得到
 
 ``` bash
 (base) senzuo@senzuo:~/Documents/os/2018-6.828/lab/obj/kern$ objdump -x kernel
@@ -269,7 +286,7 @@ bad:
 
 源码中可以看出
 
-- 1处实现的是往ELFHDR处读4k,page内容,包括了ELF的Header和部分`section`信息
+- 1处实现的是往ELFHDR处读4k(page)内容,包括了ELF的Header和部分`section`信息
 - 2处首先从ELF的Header拿到有几个加载的程序段,ELF的Header后紧邻着连续的程序段的Header,此处就将指针跳过自身(ELF Header),指向程序段Header开始的地址,而后强转为程序段的Header指针
 - 3处得到程序段Header结束时的地址
 - 4处每一个程序段Header都有该程序段的源地址和加载地址(LMA),此处分别加载每个段的内容到各自指定的地址
@@ -282,11 +299,13 @@ bad:
 
 #### ELF
 
-为了搞清楚`boot/main.c`就要知道一些ELF的知识,ELF是在Linux系统上由C源文件通过编译得到一堆`.o`文件,而后obj文件链接得到的**E**可执行**L**可链接**F**格式二进制文件。
+为了搞清楚`boot/main.c`就要知道一些ELF的知识, ELF是在Linux系统上由C源文件通过编译得到一堆`.o`文件, 而后所有的obj文件链接得到**E**可执行**L**可链接**F**格式二进制文件。
 
 ##### Section
 
-我们需要知道的就是该格式的文件头部是固定长度,有加载信息,之后是**不定长**的几个程序段,每一个程序段都是一段连续的代码或者数据,kernel就是一种ELF文件,被`boot loader`加载到指定地址,然后执行。
+我们需要知道的就是该格式的文件头部是固定长度,有加载信息,之后是**不定长**的程序头, 程序头列表了每一个要加载的程序段, 程序段是一段连续的代码或者数据
+
+kernel就是一种ELF文件, kernel中的几个section被`boot loader`加载到指定地址,然后执行。
 
 几个重要的程序`section`
 
@@ -443,7 +462,7 @@ start address 0x0010000c
 
 #### 其他
 
-一开始ELF的Header要加载的地址是`0x10000`,和ELF文件的`0x100000`对不上,我以为是线性一个一个的连续加载.后来才发现自己理解的不对.
+一开始ELF的Header要加载的地址是`0x10000`,和ELF 加载section的`0x100000`是不一样的, 一个在`Low Memory`一个在`Extend Memory` 
 
 
 
@@ -519,7 +538,7 @@ Breakpoint 1, 0x0010000c in ?? ()
 (gdb) 
 ```
 
-### 格式化打印
+### 格式化打印控制台
 
 `printf`并不是C语言本身的范畴,这个函数是要我们自己动手实现的.
 
@@ -636,19 +655,29 @@ test_backtrace(int x)
 		mon_backtrace(0, 0, 0);
 	cprintf("leaving test_backtrace %d\n", x);
 }
+
 ```
+
+在第一次进入该函数的时候, `ebp`所指的值就是特殊值`0x00000000`
+
+![](./img/ebp.png)
 
 1. 如图,每次调用都会执行前几个指令
 
    1. 保存`bp`指针
    2. 新的`bp`就指向当前
-   3. 栈扩展空间,就是图中的第四个指令
+   3. 栈扩展空间,就是图中的第四个减法指令
 
    ![](./img/exer10.png)
 
 2. 每次调用`sp`都会减去`0xc`,也就是分配12个字节
 
 3. 这些字节用来保存调用函数的变量
+
+> 关于栈的有用的gdb命令
+>
+> 1. info frame 当前栈帧信息
+> 2. info args 当前栈的参数
 
 #### Exercise 11
 
@@ -731,5 +760,7 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 ## 参考
 
 https://pdos.csail.mit.edu/6.828/2018/labs/lab1/
+
 https://www.cnblogs.com/bdhmwz/p/4922486.html
+
 https://www.cnblogs.com/wuhualong/tag/6.828/
