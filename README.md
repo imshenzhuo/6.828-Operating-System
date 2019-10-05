@@ -4,3 +4,5 @@
 
 [Lab 1 Booting a PC](./lab-report/lab1.md)
 
+[Lab 2: Memory Management](./lab-report/lab2.md)
+
