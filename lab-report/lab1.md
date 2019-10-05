@@ -678,6 +678,7 @@ test_backtrace(int x)
 >
 > 1. info frame 当前栈帧信息
 > 2. info args 当前栈的参数
+> 3. x/Nx $esp 打印栈顶的前N个内容
 
 #### Exercise 11
 
