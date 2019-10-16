@@ -64,7 +64,7 @@ A PC's physical address space is **hard-wired** to have the following general la
 ```
 
 注意到
-1. 并不是全部是RAM,BIOS就是ROM
+1. 并不是全部是RAM,早期BIOS就是ROM, 之后是可更新的flash
 2. 因为地址线有32根, 所以地址空间自然就是2^32=4G
 3. 该地址空间是物理空间,全部都是通过电路硬编码组成的
 
@@ -72,9 +72,11 @@ A PC's physical address space is **hard-wired** to have the following general la
 
 低640k,Low Memory区域是早期PC唯一可以使用的RAM, 为了兼容所以就留了下来
 
-紧接着的384k是为特殊用途的硬件留下来的物理地址空间, 比如说启动的BIOS或者显示屏的VGA
+紧接着的384k是为特殊用途的硬件留下来的物理地址空间, 比如说BIOS(占64KB)或者显示屏的VGA
 
 这384k的空间以一个洞的形式将RAM分成了两部分,Low Memory & Extended Memory
+
+物理内存最高位保留给32为PCI设备(接收外部中断的设备 `Program Control Interrupt`)使用
 
 注意: 由于`JOS`设计的限制, 在之后所有关于`JOS`的`lab`中只使用前256M的物理内存.
 
@@ -82,7 +84,7 @@ A PC's physical address space is **hard-wired** to have the following general la
 
 #### 什么是BIOS
 
-> BIOS是处理器用于获取操作系统的一段程序,该程序可以被处理器访问,位于集成在PC内部的一个EPROM芯片中
+> BIOS是处理器用于获取操作系统的一段程序,该程序可以被处理器访问,位于集成在PC内部的一个EPROM芯片(flash)中
 >
 > https://whatis.techtarget.com/definition/BIOS-basic-input-output-system
 
@@ -93,23 +95,34 @@ A PC's physical address space is **hard-wired** to have the following general la
 得到
 
 ``` bash
-athena% make gdb
-GNU gdb (GDB) 6.8-debian
-Copyright (C) 2008 Free Software Foundation, Inc.
+(base) senzuo@senzuo:~/Documents/os/new_try/lab$ make gdb
+gdb -n -x .gdbinit
+GNU gdb (Ubuntu 7.11.1-0ubuntu1~16.5) 7.11.1
+Copyright (C) 2016 Free Software Foundation, Inc.
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
 and "show warranty" for details.
-This GDB was configured as "i486-linux-gnu".
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<http://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+<http://www.gnu.org/software/gdb/documentation/>.
+For help, type "help".
+Type "apropos word" to search for commands related to "word".
 + target remote localhost:26000
+warning: A handler for the OS ABI "GNU/Linux" is not built into this configuration
+of GDB.  Attempting to continue with the default i8086 settings.
+
 The target architecture is assumed to be i8086
-[f000:fff0] 0xffff0:	ljmp   $0xf000,$0xe05b
+[f000:fff0]    0xffff0:	ljmp   $0xf000,$0xe05b
 0x0000fff0 in ?? ()
 + symbol-file obj/kern/kernel
 (gdb) 
 ```
 
-PC启动上电后执行的第一条指令
+得到PC上电启动执行的第一条指令
 
 ``` asm
 [f000:fff0] 0xffff0:	ljmp   $0xf000,$0xe05b
@@ -117,13 +130,15 @@ PC启动上电后执行的第一条指令
 
 可以得出一些信息：
 
-- 第一条指令在BIOS内 ,BIOS有64k字节,该指令在BIOS区域的最后---倒数第16个字节
+- 第一条指令的地址是`0xffff0`, 在BIOS内; BIOS有64k字节,该指令在BIOS区域的最后---倒数第16个字节
 - PC开始执行：`CS = 0xf000` and `IP = 0xfff0`.
-- 第一条指令做的是跳转,毕竟16个字节做不了什么
+- 第一条指令做的是跳转`ljmp`,毕竟16个字节做不了什么
 
-到此,都发生了什么呢？首先按下PC电源开机,此时还是裸机, 一堆硬板, 内存里面什么都没有, BIOS程序是硬编码在指定地址的, 按下电源后处理器`reset`, 进入`real mode`, 硬件程序设置`cs`和`ip`分别等于`0xf000`和`0xfff0`(硬编码),在该模式下得到物理地址`0xffff0`, 也就是BIOS的地盘. CPU开始取指、执行、取指……
+至此, 都发生了什么呢? 
 
-- `real mode`参考[mode](../prepare/mode/book1.2.7)
+首先按下PC电源开机, 此时还是裸机, 一堆硬板, 内存里面什么都没有, BIOS程序是硬编码在指定地址的, 按下电源后处理器`reset`, 进入`real mode`, 硬件程序设置`cs`和`ip`分别等于`0xf000`和`0xfff0`(硬编码),在该模式下得到物理地址`0xffff0`, 也就是BIOS的地盘. CPU开始从BIOS中取指、执行、取指……
+
+- `real mode`[参考](../prepare/processor_mode.md)
 
 - `ljump`指令,第一个参数是`cs`寄存器,第二个是`ip`寄存器得到的物理地址
 
@@ -139,16 +154,19 @@ PC启动上电后执行的第一条指令
 
 ## Part 2 Boot Loader
 
-当`BIOS`发现一个bootable的device的时候,将该device的第一个扇区`boot sector`的内容加载(从device到Low Memory)到物理地址`0x7c00--0x7dff`,使用`ljmp`指令跳到该地址(`0000:7c00`)后控制权由`BIOS`交接到`boot loader`(CPU的取指地方,也就是`cs`寄存器的变化),早期PC`boot loader`的最大512字节.
+当`BIOS`发现一个bootable的device的时候,将该device的第一个扇区`boot sector`的内容加载(从device到Low Memory)到物理地址`0x7c00--0x7dff`, 使用`ljmp`指令跳到该地址(`0000:7c00`)后控制权由`BIOS`交接到`boot loader`(CPU的取指地方, 也就是`cs`寄存器的变化),早期PC`boot loader`最大512字节, 也就是一个扇区.
 
 ### Boot Loader的工作
 
 `boot loader`的内容在`boot/boot.S`和`boot/main.c`中,`boot loader`主要完成了两件事
 
-- 将处理器从`real mode`转为`protect mode`,简单来说,原来的地址空间只够1M(20 bits),现在可以到4G(32 bits)
+- 将处理器从`real mode`转为`32bit protect mode`,简单来说,原来的地址空间只能够得到1M(20 bits),现在可以到4G(32 bits)
 - 加载`kernel`,后将控制权交给`kernel `
 
-注意：可以参考`obj/boot/boot.sam`,源码反汇编形成的汇编代码
+注意：
+
+- `80386`的两种模式有什么不同, 为什么32位的`80386`在`real mode`下只能访问1M内存?  [参考](../prepare/processor_mode.md)
+- 可以参考`obj/boot/boot.sam`,源码反汇编形成的汇编代码
 
 > 源码内有大量的注释,很多不懂地方的答案就在不想看的英文注释上。
 
@@ -188,6 +206,12 @@ Continuing.
 ```
 
 通过将`CR0`寄存器的`PE`置一,使保护模式使能,后通过`jmp`切换
+
+> 此处还有GDT等处理器预备知识:
+>
+> - lgdt加载GDT地址到gdtr寄存器
+> - Selector指向的表就是gdt, 其中包含了段的信息 base lim等
+> - `boot.S`最后几行构建了gdt的内容, 第一项为空, 之后是代码段和数据段, base和lim都相同
 
 ``` asm
 [   0:7c26] => 0x7c26:  or     $0x1,%eax
@@ -292,8 +316,6 @@ bad:
 - 4处每一个程序段Header都有该程序段的源地址和加载地址(LMA),此处分别加载每个段的内容到各自指定的地址
 
 自此,内核加载完成,最后进入内核执行
-
-
 
 ### 加载kernel
 
@@ -428,7 +450,7 @@ EXEC_P, HAS_SYMS, D_PAGED
 start address 0x0010000c
 ```
 
-现在就完全理解`boot/main.c`了!
+现在就理解`boot/main.c`了!
 
 ### 记录
 
@@ -458,8 +480,6 @@ start address 0x0010000c
 
 所以虽然说是函数指针调用,但是实际上就是进入本来就程序入口而已,没有所谓的函数体
 
-
-
 #### 其他
 
 一开始ELF的Header要加载的地址是`0x10000`,和ELF 加载section的`0x100000`是不一样的, 一个在`Low Memory`一个在`Extend Memory` 
@@ -468,9 +488,9 @@ start address 0x0010000c
 
 ## Part 3 Kernel
 
-第三部分稍微深入一点查看`kernel`,和`boot loader`类似,`kernel`以一些汇编代码开始,为之后的C代码做准备,使得C代码正确地执行.
+第三部分稍微深入一点查看`kernel`, 和`boot loader`先boot/boot.S后boot/main/bootmain类似, `kernel`以一些汇编代码开始kern/entry.S, 为之后的C代码做准备,使得C代码kern/init.c正确地执行. 
 
-### 虚拟内存初探
+### 使用虚拟内存使得位置独立
 
 操作系统kernel喜欢链接和运行在很高的虚拟地址,上文中的`0x0f0100000`,这样可以腾出地地址空间给用户进程使用,详细情况在下一个Lab说明.
 
@@ -552,17 +572,13 @@ Breakpoint 1, 0x0010000c in ?? ()
 在文件`lib/printfmt.c`中参考16进制的写法,可以很容易的得到8进制的代码
 
 ``` c
-// (unsigned) hexadecimal
-		case 'x':
+		// (unsigned) octal
+		case 'o':
+			// Replace this with your code.
 			num = getuint(&ap, lflag);
 			base = 8;
-		// (unsigned) hexadecimal
-case 'x':
-	num = getuint(&ap, lflag);
-	base = 16;
-number:
-	printnum(putch, putdat, num, base, width, padc);
-	break;
+			printnum(putch, putdat, num, base, width, padc);
+			break;
 ```
 
 
@@ -608,9 +624,11 @@ putch(int ch, int *cnt)
 
 ### Stack
 
+stack是使用最多的数据结构, 之后的上下文切换等重要内容离不开Stack, 所以掌握stack是非常重要的. 
+
 最后一部分,学习在`x86`架构上C语言使用stack的细节,并且写一个函数打印stack的 *backtrace*
 
-前提是要知道基础的栈结构, 具体可以查看[栈帧结构](./prepare/stack.md)
+前提	是要知道基础的栈结构, 具体可以查看[栈帧结构](../prepare/stack.md)
 
 ![](./img/stack.png)
 
@@ -724,7 +742,17 @@ Stack backtrace:
 
 > Modify your stack backtrace function to display, for each `eip`, the function name, source file name, and line number corresponding to that `eip`.
 
-给出了一个函数`debuginfo_eip()`,该函数在符号表查找`eip`返回该地址的`debug`信息
+给出了一个函数`debuginfo_eip()`,该函数在符号表查找`eip`然后返回该地址的`debug`信息
+
+``` C
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+	if(lline <= rline)
+		info -> eip_line = stabs[lline].n_desc;
+	else
+		return -1;
+```
+
+
 
 使用该函数即可
 
@@ -755,6 +783,40 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 	return 0;
 }
 ```
+
+最后 `make grade`
+
+``` bash
+./grade-lab1 
+make[1]: Entering directory '/home/senzuo/Documents/os/new_try/lab'
++ as kern/entry.S
++ cc kern/entrypgdir.c
++ cc kern/init.c
++ cc kern/console.c
++ cc kern/monitor.c
++ cc kern/printf.c
++ cc kern/kdebug.c
++ cc lib/printfmt.c
++ cc lib/readline.c
++ cc lib/string.c
++ ld obj/kern/kernel
+ld: warning: section `.bss' type changed to PROGBITS
++ as boot/boot.S
++ cc -Os boot/main.c
++ ld boot/boot
+boot block is 390 bytes (max 510)
++ mk obj/kern/kernel.img
+make[1]: Leaving directory '/home/senzuo/Documents/os/new_try/lab'
+running JOS: (0.8s) 
+  printf: OK 
+  backtrace count: OK 
+  backtrace arguments: OK 
+  backtrace symbols: OK 
+  backtrace lines: OK 
+Score: 50/50
+```
+
+
 
 
 
