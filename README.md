@@ -6,3 +6,5 @@
 
 [Lab 2: Memory Management](./lab-report/lab2.md)
 
+[Lab 3: User Environments](./lab-report/lab3.md)
+
